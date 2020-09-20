@@ -27,116 +27,111 @@ https://howtomechatronics.com/tutorials/arduino/arduino-and-mpu6050-acceleromete
 
 Madgwick filter function adapted from:
 https://github.com/arduino-libraries/MadgwickAHRS
+
+MPU9250 implementation based on MPU9250 library by
+brian.taylor@bolderflight.com
+http://www.bolderflight.com
+
 */
 
-
-
-
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+//USER-SPECIFIED DEFINES
 
+//Uncomment only one receiver type
+//#define USE_PPM_RX
+//#define USE_PWM_RX
+#define USE_SBUS_RX
 
+//Uncomment only one MPU
+//#define USE_MPU6050_I2C
+#define USE_MPU9250_SPI
+
+//Uncomment only one full scale gyro range
+#define GYRO_250DPS
+//#define GYRO_500DPS
+//#define GYRO_1000DPS
+//#define GYRO_2000DPS
+
+//Uncomment only one full scale accelerometer range
+#define ACCEL_2G
+//#define ACCEL_4G
+//#define ACCEL_8G
+//#define ACCEL_16G
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 //REQUIRED LIBRARIES
-#include <Wire.h> //I2c communication
+#include <Wire.h>     //I2c communication
+#include <SPI.h>      //SPI communication
 #include <PWMServo.h> //commanding any extra actuators, installed with teensyduino installer
 
+#if defined USE_SBUS_RX
+  #include <SBUS.h>   //sBus interface
+#endif
 
-
-
+#if defined USE_MPU6050_I2C
+  #include <MPU6050.h>
+  MPU6050 mpu6050;
+#elif defined USE_MPU9250_SPI
+  #include <MPU9250.h>
+  MPU9250 mpu9250(SPI2,36);
+#else
+  #error No MPU defined....  
+#endif
+  
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+//Setup gyro and accel full scale value selection and scale factor
+#if defined USE_MPU6050_I2C
+  #define GYRO_FS_SEL_250    MPU6050_GYRO_FS_250
+  #define GYRO_FS_SEL_500    MPU6050_GYRO_FS_500
+  #define GYRO_FS_SEL_1000   MPU6050_GYRO_FS_1000
+  #define GYRO_FS_SEL_2000   MPU6050_GYRO_FS_2000
+  #define ACCEL_FS_SEL_2     MPU6050_ACCEL_FS_2
+  #define ACCEL_FS_SEL_4     MPU6050_ACCEL_FS_4
+  #define ACCEL_FS_SEL_8     MPU6050_ACCEL_FS_8
+  #define ACCEL_FS_SEL_16    MPU6050_ACCEL_FS_16
+#elif defined USE_MPU9250_SPI
+  #define GYRO_FS_SEL_250    mpu9250.GYRO_RANGE_250DPS
+  #define GYRO_FS_SEL_500    mpu9250.GYRO_RANGE_500DPS
+  #define GYRO_FS_SEL_1000   mpu9250.GYRO_RANGE_1000DPS                                                        
+  #define GYRO_FS_SEL_2000   mpu9250.GYRO_RANGE_2000DPS
+  #define ACCEL_FS_SEL_2     mpu9250.ACCEL_RANGE_2G
+  #define ACCEL_FS_SEL_4     mpu9250.ACCEL_RANGE_4G
+  #define ACCEL_FS_SEL_8     mpu9250.ACCEL_RANGE_8G
+  #define ACCEL_FS_SEL_16    mpu9250.ACCEL_RANGE_16G
+#endif
+  
+#if defined GYRO_250DPS
+  #define GYRO_SCALE GYRO_FS_SEL_250
+  #define GYRO_SCALE_FACTOR 131.0
+#elif defined GYRO_500DPS
+  #define GYRO_SCALE GYRO_FS_SEL_500
+  #define GRYO_SCALE_FACTOR 65.5
+#elif defined GYRO_1000DPS
+  #define GYRO_SCALE GYRO_FS_SEL_1000
+  #define GYRO_SCALE_FACTOR 32.8
+#elif defined GYRO_2000DPS
+  #define GYRO_SCALE GYRO_FS_SEL_2000
+  #define GYRO_SCALE_FACTOR 16.4
+#endif
 
-
-
-//DECLARE PINS
-//NOTE: Pin 13 is reserved for onboard LED, pins 18 and 19 are reserved for the IMU
-//Radio:
-const int ch1Pin = 15; //throttle
-const int ch2Pin = 16; //ail
-const int ch3Pin = 17; //ele
-const int ch4Pin = 20; //rudd
-const int ch5Pin = 21; //gear (throttle cut)
-const int ch6Pin = 22; //aux1 (free aux channel)
-const int PPM_Pin = 23;
-//MPU6050:
-const int MPU = 0x68; //MPU6050 I2C address -- pins 19 = SCL & 18 = SDA
-//Motor pin outputs:
-const int m1Pin = 0;
-const int m2Pin = 1;
-const int m3Pin = 2;
-const int m4Pin = 3;
-const int m5Pin = 4;
-const int m6Pin = 5;
-//PWM outputs:
-const int servo1Pin = 6;
-const int servo2Pin = 7;
-const int servo3Pin = 8;
-const int servo4Pin = 9;
-const int servo5Pin = 10;
-const int servo6Pin = 11;
-const int servo7Pin = 12;
-PWMServo servo1;  //create servo object to control a servo
-PWMServo servo2;
-PWMServo servo3;
-PWMServo servo4;
-PWMServo servo5;
-PWMServo servo6;
-PWMServo servo7;
-
-
-
-
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-
-
-//DECLARE GLOBAL VARIABLES
-//General stuff
-float dt;
-unsigned long current_time, prev_time;
-unsigned long print_counter, serial_counter;
-unsigned long blink_counter, blink_delay;
-bool blinkAlternate;
-//Radio comm:
-unsigned long channel_1_pwm, channel_2_pwm, channel_3_pwm, channel_4_pwm, channel_5_pwm, channel_6_pwm;
-unsigned long channel_1_pwm_prev, channel_2_pwm_prev, channel_3_pwm_prev, channel_4_pwm_prev;
-int radio_command = 1;
-//IMU:
-float AccX, AccY, AccZ;
-float AccX_prev, AccY_prev, AccZ_prev;
-float GyroX, GyroY, GyroZ;
-float GyroX_prev, GyroY_prev, GyroZ_prev;
-float roll_IMU, pitch_IMU, yaw_IMU;
-float roll_IMU_prev, pitch_IMU_prev;
-float AccErrorX, AccErrorY, AccErrorZ, GyroErrorX, GyroErrorY, GyroErrorZ;
-float roll_correction, pitch_correction;
-float beta = 0.04; //madgwick filter parameter 
-float q0 = 1.0f; //initialize quaternion for madgwick filter
-float q1 = 0.0f;
-float q2 = 0.0f;
-float q3 = 0.0f;
-//Normalized desired state:
-float thro_des, roll_des, pitch_des, yaw_des;
-float roll_passthru, pitch_passthru, yaw_passthru;
-//Controller:
-float error_roll, error_roll_prev, roll_des_prev, integral_roll, integral_roll_il, integral_roll_ol, integral_roll_prev, integral_roll_prev_il, integral_roll_prev_ol, derivative_roll, roll_PID = 0;
-float error_pitch, error_pitch_prev, pitch_des_prev, integral_pitch, integral_pitch_il, integral_pitch_ol, integral_pitch_prev, integral_pitch_prev_il, integral_pitch_prev_ol, derivative_pitch, pitch_PID = 0;
-float error_yaw, error_yaw_prev, integral_yaw, integral_yaw_prev, derivative_yaw, yaw_PID = 0;
-//Mixer
-float m1_command_scaled, m2_command_scaled, m3_command_scaled, m4_command_scaled, m5_command_scaled, m6_command_scaled;
-int m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM, m5_command_PWM, m6_command_PWM;
-float s1_command_scaled, s2_command_scaled, s3_command_scaled, s4_command_scaled, s5_command_scaled, s6_command_scaled, s7_command_scaled;
-int s1_command_PWM, s2_command_PWM, s3_command_PWM, s4_command_PWM, s5_command_PWM, s6_command_PWM, s7_command_PWM;
-
-
-
+#if defined ACCEL_2G
+  #define ACCEL_SCALE ACCEL_FS_SEL_2
+  #define ACCEL_SCALE_FACTOR 16384.0
+#elif defined ACCEL_4G
+  #define ACCEL_SCALE ACCEL_FS_SEL_4
+  #define ACCEL_SCALE_FACTOR 8192.0
+#elif defined ACCEL_8G
+  #define ACCEL_SCALE ACCEL_FS_SEL_8
+  #define ACCEL_SCALE_FACTOR 4096.0
+#elif defined ACCEL_16G
+  #define ACCEL_SCALE ACCEL_FS_SEL_16
+  #define ACCEL_SCALE_FACTOR 2048.0
+#endif
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-
 
 //USER-SPECIFIED VARIABLES
 //Radio failsafe values for every channel in the event that bad reciever data is detected. Recommended defaults:
@@ -171,13 +166,98 @@ float Kp_yaw = 0.3;      //Yaw P-gain
 float Ki_yaw = 0.05;     //Yaw I-gain
 float Kd_yaw = 0.00015;   //Yaw D-gain (be careful when increasing too high, motors will begin to overheat!)
 
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-
+//DECLARE PINS
+//NOTE: Pin 13 is reserved for onboard LED, pins 18 and 19 are reserved for the IMU
+//Radio:
+const int ch1Pin = 15; //throttle
+const int ch2Pin = 16; //ail
+const int ch3Pin = 17; //ele
+const int ch4Pin = 20; //rudd
+const int ch5Pin = 21; //gear (throttle cut)
+const int ch6Pin = 22; //aux1 (free aux channel)
+const int PPM_Pin = 23;
+//Motor pin outputs:
+const int m1Pin = 0;
+const int m2Pin = 1;
+const int m3Pin = 2;
+const int m4Pin = 3;
+const int m5Pin = 4;
+const int m6Pin = 5;
+//PWM outputs:
+const int servo1Pin = 6;
+const int servo2Pin = 7;
+const int servo3Pin = 8;
+const int servo4Pin = 9;
+const int servo5Pin = 10;
+const int servo6Pin = 11;
+const int servo7Pin = 12;
+PWMServo servo1;  //create servo object to control a servo
+PWMServo servo2;
+PWMServo servo3;
+PWMServo servo4;
+PWMServo servo5;
+PWMServo servo6;
+PWMServo servo7;
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+//DECLARE GLOBAL VARIABLES
+//General stuff
+float dt;
+unsigned long current_time, prev_time;
+unsigned long print_counter, serial_counter;
+unsigned long blink_counter, blink_delay;
+bool blinkAlternate;
+//Radio comm:
+float channel_1_pwm, channel_2_pwm, channel_3_pwm, channel_4_pwm, channel_5_pwm, channel_6_pwm;
+float channel_1_pwm_prev, channel_2_pwm_prev, channel_3_pwm_prev, channel_4_pwm_prev;
 
+#if defined USE_SBUS_RX
+  SBUS sbus(Serial5);
+  uint16_t sbusChannels[16];
+  bool sbusFailSafe;
+  bool sbusLostFrame;
+#endif
 
+int radio_command = 1;
+
+//IMU:
+float AccX, AccY, AccZ;
+float AccX_prev, AccY_prev, AccZ_prev;
+float GyroX, GyroY, GyroZ;
+float GyroX_prev, GyroY_prev, GyroZ_prev;
+#if defined USE_MPU9250_SPI
+  float MagX, MagY, MagZ;
+  float MagX_prev, MagY_prev, MagZ_prev;
+#endif
+float roll_IMU, pitch_IMU, yaw_IMU;
+float roll_IMU_prev, pitch_IMU_prev;
+float AccErrorX, AccErrorY, AccErrorZ, GyroErrorX, GyroErrorY, GyroErrorZ;
+float roll_correction, pitch_correction;
+float beta = 0.04; //madgwick filter parameter 
+float q0 = 1.0f; //initialize quaternion for madgwick filter
+float q1 = 0.0f;
+float q2 = 0.0f;
+float q3 = 0.0f;
+
+//Normalized desired state:
+float thro_des, roll_des, pitch_des, yaw_des;
+float roll_passthru, pitch_passthru, yaw_passthru;
+
+//Controller:
+float error_roll, error_roll_prev, roll_des_prev, integral_roll, integral_roll_il, integral_roll_ol, integral_roll_prev, integral_roll_prev_il, integral_roll_prev_ol, derivative_roll, roll_PID = 0;
+float error_pitch, error_pitch_prev, pitch_des_prev, integral_pitch, integral_pitch_il, integral_pitch_ol, integral_pitch_prev, integral_pitch_prev_il, integral_pitch_prev_ol, derivative_pitch, pitch_PID = 0;
+float error_yaw, error_yaw_prev, integral_yaw, integral_yaw_prev, derivative_yaw, yaw_PID = 0;
+
+//Mixer
+float m1_command_scaled, m2_command_scaled, m3_command_scaled, m4_command_scaled, m5_command_scaled, m6_command_scaled;
+int m1_command_PWM, m2_command_PWM, m3_command_PWM, m4_command_PWM, m5_command_PWM, m6_command_PWM;
+float s1_command_scaled, s2_command_scaled, s3_command_scaled, s4_command_scaled, s5_command_scaled, s6_command_scaled, s7_command_scaled;
+int s1_command_PWM, s2_command_PWM, s3_command_PWM, s4_command_PWM, s5_command_PWM, s6_command_PWM, s7_command_PWM;
+
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 //SETUP
 void setup() {
@@ -205,9 +285,16 @@ void setup() {
 
   delay(20);
 
-  //Initialize radio communication - SELECT ONE 
-  readPWM_setup(ch1Pin, ch2Pin, ch3Pin, ch4Pin, ch5Pin, ch6Pin); //uncomment if using 6 channel pwm receiver
-  //readPPM_setup(PPM_Pin) //uncomment if using ppm receiver
+  //Initialize radio communication
+  #if defined USE_PPM_RX
+    readPPM_setup(PPM_Pin);
+  #elif defined USE_PWM_RX
+    readPWM_setup(ch1Pin, ch2Pin, ch3Pin, ch4Pin, ch5Pin, ch6Pin);
+  #elif defined USE_SBUS_RX
+    sbus.begin();
+  #else
+    #error No RX type defined
+  #endif
 
   //Set radio channels to default (safe) values
   channel_1_pwm = channel_1_fs;
@@ -220,13 +307,13 @@ void setup() {
   //Initialize IMU communication
   IMUinit();
 
-  delay(20);
+  delay(10);
 
   //Get IMU error to calibrate attitude, assuming vehicle is level
   calculate_IMU_error();
   calibrateAttitude(); //helps to warm up IMU and Madgwick filter
 
-  delay(20);
+  delay(10);
 
   //Arm servo channels
   servo1.write(0); //command servo angle from 0-180 degrees (1000 - 2000 PWM)
@@ -237,7 +324,7 @@ void setup() {
   servo6.write(0);
   servo7.write(0);
   
-  delay(20);
+  delay(10);
 
   //Arm motors
   m1_command_PWM = 125;
@@ -254,13 +341,7 @@ void setup() {
   setupBlink(3,150,70); //numBlinks, upTime (ms), downTime (ms) -- 3 quick blinks indicates entering main loop!
 }
 
-
-
-
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-
 
 //MAIN LOOP
 void loop() {
@@ -271,15 +352,17 @@ void loop() {
   loopBlink(); //indicate we are in main loop with short blink every 1.5 seconds
 
   //Print data at 100hz (uncomment one at a time for troubleshooting) - SELECT ONE
-  //printRadioData(); //radio pwm values 
-  //printDesiredState(); //desired vehicle state commanded in either degrees or degrees/sec
-  //printGyroData(); //prints filtered gyro data direct from IMU
-  //printAccelData(); //prints filtered accelerometer data direct from IMU
-  //printRollPitchYaw(); //prints roll, pitch, and yaw angles in degrees from Madgwick filter 
-  //printPIDoutput(); //prints computed stabilized PID variables from controller and desired setpoint
+  printRadioData();     //radio pwm values 
+  //printRawSbus();       //prints raw sbus channels
+  //printDesiredState();  //desired vehicle state commanded in either degrees or degrees/sec
+  //printGyroData();      //prints filtered gyro data direct from IMU
+  //printAccelData();     //prints filtered accelerometer data direct from IMU
+  //printMagData();       //prints filtered magnetometer data direct ftom IMU
+  //printRollPitchYaw();  //prints roll, pitch, and yaw angles in degrees from Madgwick filter 
+  //printPIDoutput();     //prints computed stabilized PID variables from controller and desired setpoint
   //printMotorCommands(); //prints the values being written to the motors
-  //printLoopRate(); //prints the time between loops in microseconds
-
+  //printLoopRate();      //prints the time between loops in microseconds
+  
   //Get vehicle state
   getIMUdata(); //pulls raw gyro and accel data from IMU and LP filters to remove noise
   Madgwick(GyroX, GyroY, GyroZ, AccX, AccY, AccZ, dt); //updates roll_IMU, pitch_IMU, and yaw_IMU (degrees)
@@ -317,29 +400,50 @@ void loop() {
   loopRate(2000); //do not exceed 2000Hz, all filter parameters tuned to 2000Hz by default
 }
 
-
-
-
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-
 
 //FUNCTIONS
 
 void IMUinit() {
-  //DESCRIPTION: Initialize IMU I2C connection
+  //DESCRIPTION: Initialize IMU
   /*
    * Don't worry about how this works
    */
-  Wire.begin(); //Initialize communication
-  delay(20);
-  Wire.setClock(1000000); 
-  delay(20);
-  Wire.beginTransmission(MPU); //Start communication with MPU6050 // MPU=0x68
-  Wire.write(0x6B); //Talk to the register 6B
-  Wire.write(0x00); //Make reset - place a 0 into the 6B register
-  Wire.endTransmission(true); //End the transmission
+  #if defined USE_MPU6050_I2C
+    Wire.begin();
+    Wire.setClock(1000000); //Note this is 2.5 times the spec sheet 400 kHz max....
+    
+    mpu6050.initialize();
+    
+    if (mpu6050.testConnection() == false) {
+      Serial.println("MPU6050 initialization unsuccessful");
+      Serial.println("Check MPU6050 wiring or try cycling power");
+      while(1) {}
+    }
+
+    //From the reset state all registers should be 0x00, so we should be at
+    //max sample rate with digital low pass filter(s) off.  All we need to
+    //do is set the desired fullscale ranges
+    mpu6050.setFullScaleGyroRange(GYRO_SCALE);
+    mpu6050.setFullScaleAccelRange(ACCEL_SCALE);
+    
+  #elif defined USE_MPU9250_SPI
+    int status = mpu9250.begin();    
+
+    if (status < 0) {
+      Serial.println("MPU9250 initialization unsuccessful");
+      Serial.println("Check MPU9250 wiring or try cycling power");
+      Serial.print("Status: ");
+      Serial.println(status);
+      while(1) {}
+    }
+
+    //From the reset state all registers should be 0x00, so we should be at
+    //max sample rate with digital low pass filter(s) off.  All we need to
+    //do is set the desired fullscale ranges
+    mpu9250.setGyroRange(GYRO_SCALE);
+    mpu9250.setAccelRange(ACCEL_SCALE);
+  #endif
 }
 
 void getIMUdata() {
@@ -354,18 +458,16 @@ void getIMUdata() {
    */
   int16_t AcX,AcY,AcZ,GyX,GyY,GyZ;
   
-  //Get accel data
-  Wire.beginTransmission(MPU);
-  Wire.write(0x3B); //Start with register 0x3B (ACCEL_XOUT_H)
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU, 6, true); //Read 6 registers total, each axis value is stored in 2 registers
-  //For a range of +-2g, we need to divide the raw values by 16384, according to the datasheet
-  AcX = (Wire.read() << 8 | Wire.read()); //X-axis value
-  AcY = (Wire.read() << 8 | Wire.read()); //Y-axis value
-  AcZ = (Wire.read() << 8 | Wire.read()); //Z-axis value
-  AccX = AcX / 16384.0;
-  AccY = AcY / 16384.0;
-  AccZ = AcZ / 16384.0;
+  #if defined USE_MPU6050_I2C
+    mpu6050.getMotion6(&AcX, &AcY, &AcZ, &GyX, &GyY, &GyZ);
+  #elif defined USE_MPU9250_SPI
+    int16_t MgX,MgY,MgZ;
+    mpu9250.getMotion9(&AcX, &AcY, &AcZ, &GyX, &GyY, &GyZ, &MgX, &MgY, &MgZ);
+  #endif
+  
+  AccX = AcX / ACCEL_SCALE_FACTOR;
+  AccY = AcY / ACCEL_SCALE_FACTOR;
+  AccZ = AcZ / ACCEL_SCALE_FACTOR;
   //LP filter accelerometer data
   float B_accel = 0.14; //0.01
   AccX = (1.0 - B_accel)*AccX_prev + B_accel*AccX;
@@ -379,18 +481,9 @@ void getIMUdata() {
   AccY = AccY - AccErrorY;
   AccZ = AccZ - AccErrorZ;
 
-  //Get gyro data
-  Wire.beginTransmission(MPU);
-  Wire.write(0x43); //Gyro data first register address 0x43
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU, 6, true); //Read 4 registers total, each axis value is stored in 2 registers
-  //For a 250deg/s range we have to divide first the raw value by 131.0, according to the datasheet
-  GyX = (Wire.read() << 8 | Wire.read());
-  GyY = (Wire.read() << 8 | Wire.read());
-  GyZ = (Wire.read() << 8 | Wire.read());
-  GyroX = GyX / 131.0;
-  GyroY = GyY / 131.0;
-  GyroZ = GyZ / 131.0;
+  GyroX = GyX / GYRO_SCALE_FACTOR;
+  GyroY = GyY / GYRO_SCALE_FACTOR;
+  GyroZ = GyZ / GYRO_SCALE_FACTOR;
   //LP filter gyro data
   float B_gyro = 0.1; //0.13 sets cutoff just past 80Hz for about 3000Hz loop rate
   GyroX = (1.0 - B_gyro)*GyroX_prev + B_gyro*GyroX;
@@ -403,6 +496,19 @@ void getIMUdata() {
   GyroX = GyroX - GyroErrorX;
   GyroY = GyroY - GyroErrorY;
   GyroZ = GyroZ - GyroErrorZ;
+
+  //Scaling and filtering TBD
+  MagX = (float)MgX;
+  MagY = (float)MgY;
+  MagZ = (float)MgZ;
+  //LP filter mag data
+  float B_mag = 0.1;
+  MagX = (1.0 - B_mag)*MagX_prev + B_mag*MagX;
+  MagY = (1.0 - B_mag)*MagY_prev + B_mag*MagY;
+  MagZ = (1.0 - B_mag)*MagZ_prev + B_mag*MagZ;
+  MagX_prev = MagX;
+  MagY_prev = MagY;
+  MagZ_prev = MagZ;
 }
 
 void calculate_IMU_error() {
@@ -414,52 +520,37 @@ void calculate_IMU_error() {
    */
   int16_t AcX,AcY,AcZ,GyX,GyY,GyZ;
   
-  //Read accelerometer values 12000 times
+  //Read IMU values 12000 times
   int c = 0;
   while (c < 12000) {
-    Wire.beginTransmission(MPU);
-    Wire.write(0x3B);
-    Wire.endTransmission(false);
-    Wire.requestFrom(MPU, 6, true);
-    AcX = (Wire.read() << 8 | Wire.read());
-    AcY = (Wire.read() << 8 | Wire.read());
-    AcZ = (Wire.read() << 8 | Wire.read());
-    AccX = AcX / 16384.0;
-    AccY = AcY / 16384.0;
-    AccZ = AcZ / 16384.0;
+    #if defined USE_MPU6050_I2C
+      mpu6050.getMotion6(&AcX, &AcY, &AcZ, &GyX, &GyY, &GyZ);
+    #elif defined USE_MPU9250_SPI
+      mpu9250.getMotion6(&AcX, &AcY, &AcZ, &GyX, &GyY, &GyZ);
+    #endif
+    
+    AccX  = AcX / ACCEL_SCALE_FACTOR;
+    AccY  = AcY / ACCEL_SCALE_FACTOR;
+    AccZ  = AcZ / ACCEL_SCALE_FACTOR;
+    GyroX = GyX / GYRO_SCALE_FACTOR;
+    GyroY = GyY / GYRO_SCALE_FACTOR;
+    GyroZ = GyZ / GYRO_SCALE_FACTOR;
     // Sum all readings
-    AccErrorX = AccErrorX + AccX;
-    AccErrorY = AccErrorY + AccY;
-    AccErrorZ = AccErrorZ + AccZ;
-    c++;
-  }
-  //Divide the sum by 12000 to get the error value
-  AccErrorX = AccErrorX / 12000.0;
-  AccErrorY = AccErrorY / 12000.0;
-  AccErrorZ = AccErrorZ / 12000.0 - 1.0;
-  c = 0;
-  //Read gyro values 12000 times
-  while (c < 12000) {
-    Wire.beginTransmission(MPU);
-    Wire.write(0x43);
-    Wire.endTransmission(false);
-    Wire.requestFrom(MPU, 6, true);
-    GyX = Wire.read() << 8 | Wire.read();
-    GyY = Wire.read() << 8 | Wire.read();
-    GyZ = Wire.read() << 8 | Wire.read();
-    GyroX = GyX / 131.0;
-    GyroY = GyY / 131.0;
-    GyroZ = GyZ / 131.0;
-    // Sum all readings
+    AccErrorX  = AccErrorX + AccX;
+    AccErrorY  = AccErrorY + AccY;
+    AccErrorZ  = AccErrorZ + AccZ;
     GyroErrorX = GyroErrorX + GyroX;
     GyroErrorY = GyroErrorY + GyroY;
     GyroErrorZ = GyroErrorZ + GyroZ;
     c++;
   }
   //Divide the sum by 12000 to get the error value
-  GyroErrorX = GyroErrorX / 12000.0;
-  GyroErrorY = GyroErrorY / 12000.0;
-  GyroErrorZ = GyroErrorZ / 12000.0;
+  AccErrorX  = AccErrorX / c;
+  AccErrorY  = AccErrorY / c;
+  AccErrorZ  = AccErrorZ / c - 1.0;
+  GyroErrorX = GyroErrorX / c;
+  GyroErrorY = GyroErrorY / c;
+  GyroErrorZ = GyroErrorZ / c;
 }
 
 void calibrateAttitude() {
@@ -577,9 +668,9 @@ void Madgwick(float gx, float gy, float gz, float ax, float ay, float az, float 
   q3 *= recipNorm;
 
   //compute angles
-  roll_IMU = atan2(q0*q1 + q2*q3, 0.5f - q1*q1 - q2*q2)*57.29577951; //degrees
-  pitch_IMU = asin(-2.0f * (q1*q3 - q0*q2))*57.29577951; //degrees
-  yaw_IMU = atan2(q1*q2 + q0*q3, 0.5f - q2*q2 - q3*q3)*57.29577951; //degrees
+  roll_IMU  = atan2(q0*q1 + q2*q3, 0.5f - q1*q1 - q2*q2)*57.29577951; //degrees
+  pitch_IMU = asin(-2.0f * (q1*q3 - q0*q2))*57.29577951;              //degrees
+  yaw_IMU   = atan2(q1*q2 + q0*q3, 0.5f - q2*q2 - q3*q3)*57.29577951; //degrees
 }
 
 void getDesState() {
@@ -883,12 +974,27 @@ void getCommands() {
    */
 
   radio_command = 1;
-  channel_1_pwm = getRadioPWM(1);
-  channel_2_pwm = getRadioPWM(2);
-  channel_3_pwm = getRadioPWM(3);
-  channel_4_pwm = getRadioPWM(4);
-  channel_5_pwm = getRadioPWM(5);
-  channel_6_pwm = getRadioPWM(6);
+  #if defined USE_PPM_RX || defined USE_PWM_RX
+    channel_1_pwm = getRadioPWM(1);
+    channel_2_pwm = getRadioPWM(2);
+    channel_3_pwm = getRadioPWM(3);
+    channel_4_pwm = getRadioPWM(4);
+    channel_5_pwm = getRadioPWM(5);
+    channel_6_pwm = getRadioPWM(6);
+  #elif defined USE_SBUS_RX
+    if (sbus.read(&sbusChannels[0], &sbusFailSafe, &sbusLostFrame))
+    {
+      //sBus scaling below is for Taranis-Plus and X4R-SB
+      float scale = 0.610128;  
+      float bias  = 894.7529; 
+      channel_1_pwm = sbusChannels[0] * scale + bias;
+      channel_2_pwm = sbusChannels[1] * scale + bias;
+      channel_3_pwm = sbusChannels[2] * scale + bias;
+      channel_4_pwm = sbusChannels[3] * scale + bias;
+      channel_5_pwm = sbusChannels[4] * scale + bias;
+      channel_6_pwm = sbusChannels[5] * scale + bias;     
+    }
+  #endif
   
   //Low-pass the critical commands and update previous values
   float b = 0.2;
@@ -1106,6 +1212,28 @@ void printRadioData() {
   }
 }
 
+void printRawSbus() {
+  if (current_time - print_counter > 10000) {
+    print_counter = micros();
+    #if defined USE_SBUS_RX
+      Serial.print(F(" CH1: "));
+      Serial.print(sbusChannels[0]);
+      Serial.print(F(" CH2: "));
+      Serial.print(sbusChannels[1]);
+      Serial.print(F(" CH3: "));
+      Serial.print(sbusChannels[2]);
+      Serial.print(F(" CH4: "));
+      Serial.print(sbusChannels[3]);
+      Serial.print(F(" CH5: "));
+      Serial.print(sbusChannels[4]);
+      Serial.print(F(" CH6: "));
+      Serial.println(sbusChannels[5]);
+    #else
+      Serial.println("Error - sBus not selected....");
+    #endif
+  }
+}
+
 void printDesiredState() {
   if (current_time - print_counter > 10000) {
     print_counter = micros();
@@ -1121,7 +1249,7 @@ void printDesiredState() {
 }
 
 void printGyroData() {
-    if (current_time - print_counter > 10000) {
+  if (current_time - print_counter > 10000) {
     print_counter = micros();
     Serial.print(F("GyroX: "));
     Serial.print(GyroX);
@@ -1133,7 +1261,7 @@ void printGyroData() {
 }
 
 void printAccelData() {
-    if (current_time - print_counter > 10000) {
+  if (current_time - print_counter > 10000) {
     print_counter = micros();
     Serial.print(F("AccX: "));
     Serial.print(AccX);
@@ -1144,8 +1272,24 @@ void printAccelData() {
   }
 }
 
+void printMagData() {
+  if (current_time - print_counter > 10000) {
+    print_counter = micros();
+    #if defined USE_MPU9250_SPI
+      Serial.print(F("MagX: "));
+      Serial.print(MagX);
+      Serial.print(F(" MagY: "));
+      Serial.print(MagY);
+      Serial.print(F(" MagZ: "));
+      Serial.println(MagZ);
+    #else
+      Serial.println("Error - MPU9250 not selected....");
+    #endif
+  }
+}
+
 void printRollPitchYaw() {
-    if (current_time - print_counter > 10000) {
+  if (current_time - print_counter > 10000) {
     print_counter = micros();
     Serial.print(F("roll: "));
     Serial.print(roll_IMU);
@@ -1157,7 +1301,7 @@ void printRollPitchYaw() {
 }
 
 void printPIDoutput() {
-    if (current_time - print_counter > 10000) {
+  if (current_time - print_counter > 10000) {
     print_counter = micros();
     Serial.print(F("roll_PID: "));
     Serial.print(roll_PID);

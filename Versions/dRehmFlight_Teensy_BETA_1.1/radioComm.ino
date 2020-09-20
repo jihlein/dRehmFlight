@@ -5,11 +5,11 @@
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-unsigned long rising_edge_start_1, rising_edge_start_2, rising_edge_start_3, rising_edge_start_4, rising_edge_start_5, rising_edge_start_6; 
 unsigned long channel_1_raw, channel_2_raw, channel_3_raw, channel_4_raw, channel_5_raw, channel_6_raw;
+
+#if defined USE_PPM_RX
 int ppm_counter = 0;
 unsigned long time_ms = 0;
-
 
 void readPPM_setup(int pin) {
   // DESCRIPTION: Initialize software interrupts on radio channel pin for PPM type receiver
@@ -19,63 +19,6 @@ void readPPM_setup(int pin) {
   //Attach interrupt and point to corresponding ISR function
   attachInterrupt(digitalPinToInterrupt(pin), getPPM, CHANGE);
 }
-
-
-void readPWM_setup(int ch1, int ch2, int ch3, int ch4, int ch5, int ch6) {
-  //DESCRIPTION: Initialize software interrupts on radio channel pins for PWM tpye receiver
-  //Declare interrupt pins 
-  pinMode(ch1, INPUT_PULLUP);
-  pinMode(ch2, INPUT_PULLUP);
-  pinMode(ch3, INPUT_PULLUP);
-  pinMode(ch4, INPUT_PULLUP);
-  pinMode(ch5, INPUT_PULLUP);
-  pinMode(ch6, INPUT_PULLUP);
-  delay(20);
-  //Attach interrupt and point to corresponding ISR functions
-  attachInterrupt(digitalPinToInterrupt(ch1), getCh1, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ch2), getCh2, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ch3), getCh3, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ch4), getCh4, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ch5), getCh5, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(ch6), getCh6, CHANGE);
-  delay(20);
-}
-
-unsigned long getRadioPWM(int ch_num) {
-  //DESCRIPTION: Get current radio commands from interrupt routines 
-  unsigned long returnPWM = 0;
-  
-  if (ch_num == 1) {
-    returnPWM = channel_1_raw;
-  }
-  else if (ch_num == 2) {
-    returnPWM = channel_2_raw;
-  }
-  else if (ch_num == 3) {
-    returnPWM = channel_3_raw;
-  }
-  else if (ch_num == 4) {
-    returnPWM = channel_4_raw;
-  }
-  else if (ch_num == 5) {
-    returnPWM = channel_5_raw;
-  }
-  else if (ch_num == 6) {
-    returnPWM = channel_6_raw;
-  }
-  
-  return returnPWM;
-}
-
-
-
-
-//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-
-
-//INTERRUPT SERVICE ROUTINES 
 
 void getPPM() {
   unsigned long dt_ppm;
@@ -116,6 +59,30 @@ void getPPM() {
     
     ppm_counter = ppm_counter + 1;
   }
+}
+#endif
+
+#if defined USE_PWM_RX
+unsigned long rising_edge_start_1, rising_edge_start_2, rising_edge_start_3, rising_edge_start_4, rising_edge_start_5, rising_edge_start_6; 
+
+void readPWM_setup(int ch1, int ch2, int ch3, int ch4, int ch5, int ch6) {
+  //DESCRIPTION: Initialize software interrupts on radio channel pins for PWM tpye receiver
+  //Declare interrupt pins 
+  pinMode(ch1, INPUT_PULLUP);
+  pinMode(ch2, INPUT_PULLUP);
+  pinMode(ch3, INPUT_PULLUP);
+  pinMode(ch4, INPUT_PULLUP);
+  pinMode(ch5, INPUT_PULLUP);
+  pinMode(ch6, INPUT_PULLUP);
+  delay(20);
+  //Attach interrupt and point to corresponding ISR functions
+  attachInterrupt(digitalPinToInterrupt(ch1), getCh1, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ch2), getCh2, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ch3), getCh3, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ch4), getCh4, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ch5), getCh5, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ch6), getCh6, CHANGE);
+  delay(20);
 }
 
 void getCh1() {
@@ -177,3 +144,32 @@ void getCh6() {
     channel_6_raw = micros() - rising_edge_start_6;
   }
 }
+#endif
+
+#if defined USE_PPM_RX || defined USE_PWM_RX
+unsigned long getRadioPWM(int ch_num) {
+  //DESCRIPTION: Get current radio commands from interrupt routines 
+  unsigned long returnPWM = 0;
+  
+  if (ch_num == 1) {
+    returnPWM = channel_1_raw;
+  }
+  else if (ch_num == 2) {
+    returnPWM = channel_2_raw;
+  }
+  else if (ch_num == 3) {
+    returnPWM = channel_3_raw;
+  }
+  else if (ch_num == 4) {
+    returnPWM = channel_4_raw;
+  }
+  else if (ch_num == 5) {
+    returnPWM = channel_5_raw;
+  }
+  else if (ch_num == 6) {
+    returnPWM = channel_6_raw;
+  }
+  
+  return returnPWM;
+}
+#endif
